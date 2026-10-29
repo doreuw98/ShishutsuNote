@@ -1,0 +1,12 @@
+import { getCategory } from '../domain/categories';
+import { formatMonthLabel } from '../domain/dates';
+import { formatCurrency, formatPercent } from '../domain/finance';
+import type { AppLanguage, CategoryTotal, CurrencyCode, ExchangeRates } from '../domain/types';
+import { EmptyState } from '../components/EmptyState';
+import { t } from '../i18n/messages';
+import { convertFromJpy } from '../lib/exchangeRates';
+type Props = { monthKey: string; monthTotal: number; categoryTotals: CategoryTotal[]; language: AppLanguage; currency: CurrencyCode; exchangeRates: ExchangeRates | null };
+export function AnalysisPage({ monthKey, monthTotal, categoryTotals, language, currency, exchangeRates }: Props) {
+  const money = (amount: number) => { const converted = convertFromJpy(amount, currency, exchangeRates); return converted === null ? '—' : formatCurrency(converted, currency, language); };
+  return <div className="page-content analysis-page"><section className="analysis-intro"><div><p className="eyebrow">{t(language,'category' as never)}</p><h2>{formatMonthLabel(monthKey,language)} {t(language,'month' as never)}</h2></div><strong>{money(monthTotal)}</strong></section><section aria-label={t(language,'analysisTitle' as never)} className="content-section analysis-section"><div className="section-heading"><div><p className="eyebrow">{t(language,'total' as never)}</p><h2>{t(language,'analysisTitle' as never)}</h2></div><span className="subtle-count">{categoryTotals.length}</span></div>{categoryTotals.length===0?<EmptyState title={t(language,'empty' as never)} description={t(language,'emptyHint' as never)}/>:<div className="analysis-list">{categoryTotals.map((item,index)=>{const category=getCategory(item.categoryId,language);return <div className="analysis-row" key={item.categoryId}><div className="analysis-rank">{String(index+1).padStart(2,'0')}</div><div className="analysis-main"><div className="analysis-label-row"><span><i style={{backgroundColor:category.color}}/>{category.label}</span><strong>{money(item.amount)}</strong></div><div aria-label={`${category.label} ${formatPercent(item.percent,language)}`} className="analysis-track" role="img"><span style={{width:`${item.percent}%`,backgroundColor:category.color}}/></div></div><span className="analysis-percent">{formatPercent(item.percent,language)}</span></div>})}</div>}<div className="analysis-total"><span>{t(language,'total' as never)}</span><strong>{money(monthTotal)}</strong></div></section></div>;
+}

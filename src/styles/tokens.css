@@ -1,0 +1,26 @@
+:root {
+  color-scheme: light;
+  --color-ink: #17364a;
+  --color-navy: #27576a;
+  --color-accent: #b64d23;
+  --color-accent-dark: #963d1c;
+  --color-canvas: #eff5f2;
+  --color-surface: #fffefa;
+  --color-budget-panel: #dcefe9;
+  --color-budget-track: #b6cec6;
+  --color-text: #233744;
+  --color-muted: #5e7078;
+  --color-border: #d7e3df;
+  --color-soft: #dfede8;
+  --color-success: #34765e;
+  --color-danger: #b74444;
+  --shadow-panel: 0 3px 12px rgb(23 54 74 / 5%);
+  --radius-panel: 14px;
+  --font-japanese: "Hiragino Sans", "Yu Gothic UI", "Yu Gothic", "YuGothic", Meiryo, sans-serif;
+  font-family: var(--font-japanese);
+  color: var(--color-text);
+  background: var(--color-canvas);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
