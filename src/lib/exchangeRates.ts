@@ -1,3 +1,4 @@
+import { apiUrl } from './api';
 import type { CurrencyCode, ExchangeRates } from '../domain/types';
 
 const CACHE_KEY = 'shishutsu-note.exchange-rates.v1';
@@ -37,7 +38,7 @@ export function isRateFresh(rates: ExchangeRates, now = Date.now()): boolean {
   return now - rates.fetchedAt < RATE_MAX_AGE_MS && now >= rates.fetchedAt;
 }
 
-export async function getLatestExchangeRates(): Promise<RateResult> {
+export async function getLatestExchangeRates(accessToken: string): Promise<RateResult> {
   const cached = loadCachedExchangeRates();
   if (cached && isRateFresh(cached)) return { rates: cached, state: 'ready' };
 
@@ -49,7 +50,7 @@ export async function getLatestExchangeRates(): Promise<RateResult> {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 10_000);
     let response: Response;
-    try { response = await fetch('/api/rates', { signal: controller.signal }); }
+    try { response = await fetch(apiUrl('/api/rates'), { signal: controller.signal, headers: { Authorization: 'Bearer ' + accessToken } }); }
     finally { window.clearTimeout(timeout); }
     if (response.status === 503) {
       const errorBody: unknown = await response.json().catch(() => null);
@@ -60,18 +61,18 @@ export async function getLatestExchangeRates(): Promise<RateResult> {
     if (!response.ok) return { rates: cached, state: 'error' };
     const body: unknown = await response.json();
     if (!body || typeof body !== 'object') return { rates: cached, state: 'error' };
-    const payload = body as { timestamp?: unknown; base?: unknown; rates?: { JPY?: unknown; IDR?: unknown } };
+    const payload = body as { timestamp?: unknown; fetchedAt?: unknown; stale?: unknown; base?: unknown; rates?: { JPY?: unknown; IDR?: unknown } };
     if (payload.base !== 'USD' || typeof payload.timestamp !== 'number'
       || typeof payload.rates?.JPY !== 'number' || typeof payload.rates?.IDR !== 'number'
       || !Number.isFinite(payload.timestamp) || !Number.isFinite(payload.rates.JPY) || !Number.isFinite(payload.rates.IDR)
       || payload.rates.JPY <= 0 || payload.rates.IDR <= 0) return { rates: cached, state: 'error' };
 
     const rates: ExchangeRates = {
-      base: 'USD', timestamp: payload.timestamp, fetchedAt: Date.now(),
+      base: 'USD', timestamp: payload.timestamp, fetchedAt: typeof payload.fetchedAt === 'number' && Number.isFinite(payload.fetchedAt) ? payload.fetchedAt : Date.now(),
       rates: { JPY: payload.rates.JPY, IDR: payload.rates.IDR },
     };
     saveCachedExchangeRates(rates);
-    return { rates, state: 'ready' };
+    return { rates, state: payload.stale === true ? 'error' : 'ready' };
   } catch { return { rates: cached, state: 'error' }; } })();
   try { return await requestInFlight; } finally { requestInFlight = null; }
 }

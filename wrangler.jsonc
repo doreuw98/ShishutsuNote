@@ -1,0 +1,20 @@
+{
+  "name": "shishutsu-note-api",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-10-30",
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "ALLOWED_ORIGINS": "http://localhost:5173,http://localhost:4173,http://127.0.0.1:5173,http://127.0.0.1:4173,https://doreuw98.github.io"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "shishutsu-note-db",
+      "database_id": "8aa9e5f2-ac92-4d70-bfe4-40c2f01dc36d",
+      "migrations_dir": "worker/migrations"
+    }
+  ],
+  "account_id": "66c859326f90af9158f321d44a578000"
+}

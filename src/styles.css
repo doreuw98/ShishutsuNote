@@ -1294,6 +1294,48 @@ main {
   border: 0;
 }
 
+
+.login-page,
+.session-status {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+  background: radial-gradient(ellipse at 50% 0%, #f4e6d7 0, var(--color-canvas) 52%);
+}
+.login-card {
+  width: min(100%, 440px);
+  padding: clamp(28px, 6vw, 48px);
+  border: 1px solid var(--color-border);
+  border-radius: 20px;
+  background: var(--color-surface);
+  box-shadow: 0 24px 70px rgb(40 36 30 / 10%);
+}
+.login-brand-mark {
+  display: grid; width: 48px; height: 48px; place-items: center;
+  border-radius: 14px; background: var(--color-accent); color: white;
+  font-size: 23px; font-weight: 800;
+}
+.login-eyebrow { margin: 26px 0 6px; color: var(--color-accent-dark); font-size: 11px; font-weight: 800; letter-spacing: .12em; }
+.login-card h1 { margin: 0; color: var(--color-ink); font-size: clamp(28px, 7vw, 36px); line-height: 1.2; letter-spacing: -.04em; }
+.login-intro { margin: 12px 0 28px; color: var(--color-muted); }
+.login-form { display: grid; gap: 20px; }
+.login-password-control { position: relative; display: flex; }
+.login-password-control input { width: 100%; padding-right: 74px; }
+.login-password-toggle { position: absolute; top: 50%; right: 12px; transform: translateY(-50%); border: 0; background: transparent; color: var(--color-accent-dark); font-size: 13px; font-weight: 700; }
+.login-submit { width: 100%; }
+.login-error { margin: -8px 0 0; color: #b33f32; font-size: 13px; }
+.login-footnote { margin: 28px 0 0; color: var(--color-muted); font-size: 12px; text-align: center; }
+.session-status { align-content: center; gap: 14px; color: var(--color-ink); text-align: center; }
+.session-status > * { margin: 0; }
+.session-status .button { justify-self: center; min-width: 140px; }
+.topbar-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 10px; }
+.signout-button { min-height: 42px; padding-inline: 12px; font-size: 13px; }
+@media (max-width: 760px) {
+  .topbar-actions { gap: 7px; }
+  .signout-button { min-height: 40px; padding-inline: 9px; font-size: 12px; }
+}
+
 @media (max-width: 1000px) {
   .sidebar {
     width: 208px;

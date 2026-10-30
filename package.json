@@ -8,8 +8,11 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "node --use-system-ca ./node_modules/vite/bin/vite.js preview",
-    "start": "node --use-system-ca server.js",
-    "typecheck": "tsc -b --pretty false"
+    "typecheck": "tsc -b --pretty false",
+    "worker:dev": "node --use-system-ca ./node_modules/wrangler/bin/wrangler.js dev",
+    "db:local:migrate": "wrangler d1 migrations apply shishutsu-note-db --local",
+    "db:remote:migrate": "wrangler d1 migrations apply shishutsu-note-db --remote",
+    "worker:deploy": "wrangler deploy"
   },
   "dependencies": {
     "react": "^19.3.1",
@@ -22,6 +25,7 @@
     "@vitejs/plugin-react": "^6.1.2",
     "oxlint": "^1.89.0",
     "typescript": "~7.0.2",
-    "vite": "^8.3.5"
+    "vite": "^8.3.5",
+    "wrangler": "^4.156.0"
   }
 }

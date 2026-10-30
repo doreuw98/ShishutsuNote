@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { LoginScreen } from './components/LoginScreen';
+import { ApiError, loadRemoteState, login as requestLogin, logout as requestLogout, saveRemoteState } from './lib/api';
 import { AppNavigation } from './components/AppNavigation';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { ExpenseForm } from './components/ExpenseForm';
@@ -17,10 +19,84 @@ function createId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+type BootstrapState = { state: AppState; storageStatus: LoadStatus };
+const SESSION_KEY = 'shishutsu-note.session.v1';
+
 export default function App() {
-  const [initialLoad] = useState(() => loadAppState());
-  const [appState, setAppState] = useState<AppState>(initialLoad.state);
-  const [storageStatus, setStorageStatus] = useState<LoadStatus>(initialLoad.status);
+  const [token, setToken] = useState(() => { try { return sessionStorage.getItem(SESSION_KEY) ?? ''; } catch { return ''; } });
+  const [loginPending, setLoginPending] = useState(false);
+  const [loginError, setLoginError] = useState('');
+  const [bootstrap, setBootstrap] = useState<BootstrapState | null>(null);
+  const [bootstrapError, setBootstrapError] = useState(false);
+  const language = bootstrap?.state.settings.language ?? 'ja';
+
+  const openSession = useCallback(async (accessToken: string) => {
+    setBootstrap(null);
+    setBootstrapError(false);
+    try {
+      const remote = await loadRemoteState(accessToken);
+      if (remote.initialized) {
+        setBootstrap({ state: remote.state, storageStatus: 'ready' });
+        return;
+      }
+      const local = loadAppState();
+      if (local.status === 'malformed') {
+        setBootstrap({ state: EMPTY_APP_STATE, storageStatus: 'malformed' });
+        return;
+      }
+      let state = local.state;
+      if (!state.settings.amountsMigratedToJpy) {
+        const oldCurrency = state.settings.currency;
+        const conversion = oldCurrency === 'JPY' ? null : await getLatestExchangeRates(accessToken);
+        const canConvert = oldCurrency === 'JPY' || Boolean(conversion?.rates);
+        state = canConvert ? {
+          ...state,
+          expenses: oldCurrency === 'JPY' ? state.expenses : state.expenses.map((expense) => ({ ...expense, amount: convertToJpy(expense.amount, oldCurrency, conversion?.rates ?? null) ?? expense.amount })),
+          settings: { ...state.settings, monthlyBudgets: oldCurrency === 'JPY' ? state.settings.monthlyBudgets : Object.fromEntries(Object.entries(state.settings.monthlyBudgets).map(([key, amount]) => [key, convertToJpy(amount, oldCurrency, conversion?.rates ?? null) ?? amount])), amountsMigratedToJpy: true },
+        } : { ...state, settings: { ...state.settings, currency: 'JPY', amountsMigratedToJpy: true, legacyAmountsAssumedJpy: true } };
+      }
+      await saveRemoteState(accessToken, state);
+      saveAppState(state);
+      setBootstrap({ state, storageStatus: 'ready' });
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        try { sessionStorage.removeItem(SESSION_KEY); } catch { /* Session storage may be unavailable. */ }
+        setToken('');
+      } else setBootstrapError(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!token || bootstrap || bootstrapError) return;
+    const timer = window.setTimeout(() => { void openSession(token); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [token, bootstrap, bootstrapError, openSession]);
+
+  async function handleLogin(password: string) {
+    setLoginPending(true); setLoginError('');
+    try {
+      const accessToken = await requestLogin(password);
+      try { sessionStorage.setItem(SESSION_KEY, accessToken); } catch { /* Keep token in memory for this tab. */ }
+      setToken(accessToken);
+    } catch (error) {
+      setLoginError(error instanceof ApiError ? error.code : 'connection_error');
+    } finally { setLoginPending(false); }
+  }
+
+  async function handleLogout() {
+    if (token) await requestLogout(token).catch(() => undefined);
+    try { sessionStorage.removeItem(SESSION_KEY); } catch { /* Session storage may be unavailable. */ }
+    setToken(''); setBootstrap(null);
+  }
+
+  if (!token) return <LoginScreen language={language} pending={loginPending} error={loginError} onSubmit={handleLogin} />;
+  if (!bootstrap) return <main className="session-status" role="status">{bootstrapError ? <><p>{language === 'ja' ? 'サーバーに接続できません。' : language === 'en' ? 'Could not connect to the server.' : 'Server tidak dapat dihubungi.'}</p><button className="button button-primary" onClick={() => void openSession(token)} type="button">{language === 'ja' ? '再試行' : language === 'en' ? 'Try again' : 'Coba lagi'}</button><button className="button button-quiet" onClick={handleLogout} type="button">{language === 'ja' ? 'ログアウト' : language === 'en' ? 'Sign out' : 'Keluar'}</button></> : <p>{language === 'ja' ? 'データを読み込んでいます…' : language === 'en' ? 'Loading your data…' : 'Memuat data…'}</p>}</main>;
+  return <ExpenseTracker key={token} token={token} initialState={bootstrap.state} initialStorageStatus={bootstrap.storageStatus} onLogout={handleLogout} />;
+}
+
+function ExpenseTracker({ token, initialState, initialStorageStatus, onLogout }: { token: string; initialState: AppState; initialStorageStatus: LoadStatus; onLogout: () => void }) {
+  const [appState, setAppState] = useState<AppState>(initialState);
+  const [storageStatus, setStorageStatus] = useState<LoadStatus>(initialStorageStatus);
   const [activeView, setActiveView] = useState<ViewId>('home');
   const [isExpenseFormOpen, setExpenseFormOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | undefined>();
@@ -30,7 +106,7 @@ export default function App() {
   const [exchangeRates, setExchangeRates] = useState<ExchangeRates | null>(() => loadCachedExchangeRates());
   const [rateStatus, setRateStatus] = useState<'loading' | 'ready' | 'missing-key' | 'error'>('loading');
   const [ratesChecked, setRatesChecked] = useState(false);
-  const migrationStarted = useRef(false);
+  const savingState = useRef(false);
   const language = appState.settings.language;
   const currency = appState.settings.currency;
 
@@ -46,11 +122,11 @@ export default function App() {
   }, [toast]);
 
   const refreshRates = useCallback(async () => {
-    const result = await getLatestExchangeRates();
+    const result = await getLatestExchangeRates(token);
     setExchangeRates(result.rates);
     setRateStatus(result.state);
     setRatesChecked(true);
-  }, []);
+  }, [token]);
 
   useEffect(() => {
     const startupTimer = window.setTimeout(() => { void refreshRates(); }, 0);
@@ -62,30 +138,6 @@ export default function App() {
     return () => { window.clearTimeout(startupTimer); window.clearInterval(timer); document.removeEventListener('visibilitychange', onVisibilityChange); };
   }, [refreshRates]);
 
-  useEffect(() => {
-    if (!ratesChecked || appState.settings.amountsMigratedToJpy || migrationStarted.current) return;
-    migrationStarted.current = true;
-    const oldCurrency = appState.settings.currency;
-    const canConvert = oldCurrency === 'JPY' || Boolean(exchangeRates);
-    const migratedState: AppState = canConvert
-      ? {
-          ...appState,
-          expenses: oldCurrency === 'JPY' ? appState.expenses : appState.expenses.map((expense) => ({ ...expense, amount: convertToJpy(expense.amount, oldCurrency, exchangeRates) ?? expense.amount })),
-          settings: {
-            ...appState.settings,
-            currency: oldCurrency,
-            monthlyBudgets: oldCurrency === 'JPY' ? appState.settings.monthlyBudgets : Object.fromEntries(Object.entries(appState.settings.monthlyBudgets).map(([key, amount]) => [key, convertToJpy(amount, oldCurrency, exchangeRates) ?? amount])),
-            amountsMigratedToJpy: true,
-          },
-        }
-      : {
-          ...appState,
-          settings: { ...appState.settings, currency: 'JPY', amountsMigratedToJpy: true, legacyAmountsAssumedJpy: true },
-        };
-    setAppState(migratedState);
-    const saved = saveAppState(migratedState);
-    setStorageStatus(saved ? 'ready' : 'unavailable');
-  }, [appState, exchangeRates, language, ratesChecked]);
 
   const todayKey = getTokyoDateKey(now);
   const monthKey = getTokyoMonthKey(now);
@@ -99,56 +151,52 @@ export default function App() {
   const isMigrating = !appState.settings.amountsMigratedToJpy;
   const canEditAmounts = !isMigrating && (currency === 'JPY' || Boolean(exchangeRates));
 
-  const commitState = useCallback((nextState: AppState, successMessage: string): boolean => {
-    if (storageStatus === 'malformed' || isMigrating) return false;
+  const commitState = useCallback(async (nextState: AppState, successMessage: string): Promise<boolean> => {
+    if (storageStatus === 'malformed' || isMigrating || savingState.current) return false;
+    savingState.current = true;
     const currentMonth = getTokyoMonthKey(new Date());
     const budget = nextState.settings.monthlyBudgets[currentMonth];
     const spent = getMonthTotal(nextState.expenses, currentMonth);
     const warningAlreadyShown = nextState.settings.budgetWarningShownMonths.includes(currentMonth);
     const shouldWarn = budget !== undefined && budget > 0 && spent >= budget * 0.8 && !warningAlreadyShown;
-    const stateToSave = shouldWarn
-      ? {
-          ...nextState,
-          settings: {
-            ...nextState.settings,
-            budgetWarningShownMonths: [...nextState.settings.budgetWarningShownMonths, currentMonth],
-          },
-        }
-      : nextState;
-    setAppState(stateToSave);
-    const saved = saveAppState(stateToSave);
-    setStorageStatus(saved ? 'ready' : 'unavailable');
-    setToast(shouldWarn
-      ? language === 'ja' ? '今月の支出が予算の80%に達しました。' : language === 'en' ? 'You have reached 80% of this month’s budget.' : 'Pengeluaran bulan ini mencapai 80% anggaran.'
-      : saved ? successMessage : language === 'ja' ? '変更は反映しましたが、このブラウザーには保存できませんでした。' : language === 'en' ? 'Changes are shown but could not be saved in this browser.' : 'Perubahan ditampilkan tetapi tidak dapat disimpan di browser ini.');
-    return saved;
-  }, [storageStatus, language, isMigrating]);
+    const stateToSave = shouldWarn ? { ...nextState, settings: { ...nextState.settings, budgetWarningShownMonths: [...nextState.settings.budgetWarningShownMonths, currentMonth] } } : nextState;
+    try {
+      await saveRemoteState(token, stateToSave);
+      saveAppState(stateToSave);
+      setAppState(stateToSave);
+      setStorageStatus('ready');
+      setToast(shouldWarn ? language === 'ja' ? '今月の支出が予算の80%に達しました。' : language === 'en' ? 'You have reached 80% of this month’s budget.' : 'Pengeluaran bulan ini mencapai 80% anggaran.' : successMessage);
+      return true;
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) window.location.reload();
+      setToast(language === 'ja' ? 'サーバーに保存できませんでした。接続を確認して再試行してください。' : language === 'en' ? 'Could not save to the server. Check your connection and try again.' : 'Tidak dapat menyimpan ke server. Periksa koneksi lalu coba lagi.');
+      return false;
+    } finally { savingState.current = false; }
+  }, [storageStatus, language, isMigrating, token]);
 
-  const addExpense = useCallback((input: ExpenseInput) => {
+  const addExpense = useCallback(async (input: ExpenseInput) => {
     const expense: Expense = { ...input, id: createId(), createdAt: new Date().toISOString() };
-    commitState({ ...appState, expenses: [expense, ...appState.expenses] }, language === 'ja' ? '支出を保存しました。' : language === 'en' ? 'Expense saved.' : 'Pengeluaran tersimpan.');
-    setExpenseFormOpen(false);
-    setEditingExpense(undefined);
+    const saved = await commitState({ ...appState, expenses: [expense, ...appState.expenses] }, language === 'ja' ? '支出を保存しました。' : language === 'en' ? 'Expense saved.' : 'Pengeluaran tersimpan.');
+    if (saved) { setExpenseFormOpen(false); setEditingExpense(undefined); }
   }, [appState, commitState, language]);
 
-  const updateExpense = useCallback((input: ExpenseInput) => {
+  const updateExpense = useCallback(async (input: ExpenseInput) => {
     if (!editingExpense) return;
     const expenses = appState.expenses.map((expense) => (
       expense.id === editingExpense.id ? { ...expense, ...input } : expense
     ));
-    commitState({ ...appState, expenses }, language === 'ja' ? '変更を保存しました。' : language === 'en' ? 'Changes saved.' : 'Perubahan tersimpan.');
-    setExpenseFormOpen(false);
-    setEditingExpense(undefined);
+    const saved = await commitState({ ...appState, expenses }, language === 'ja' ? '変更を保存しました。' : language === 'en' ? 'Changes saved.' : 'Perubahan tersimpan.');
+    if (saved) { setExpenseFormOpen(false); setEditingExpense(undefined); }
   }, [appState, commitState, editingExpense, language]);
 
-  const removeExpense = useCallback(() => {
+  const removeExpense = useCallback(async () => {
     if (!expenseToDelete) return;
     const expenses = appState.expenses.filter((expense) => expense.id !== expenseToDelete.id);
-    commitState({ ...appState, expenses }, language === 'ja' ? '支出を削除しました。' : language === 'en' ? 'Expense deleted.' : 'Pengeluaran dihapus.');
-    setExpenseToDelete(null);
+    const saved = await commitState({ ...appState, expenses }, language === 'ja' ? '支出を削除しました。' : language === 'en' ? 'Expense deleted.' : 'Pengeluaran dihapus.');
+    if (saved) setExpenseToDelete(null);
   }, [appState, commitState, expenseToDelete, language]);
 
-  const saveBudget = useCallback((key: string, amount: number): boolean => {
+  const saveBudget = useCallback(async (key: string, amount: number): Promise<boolean> => {
     const nextState: AppState = {
       ...appState,
       settings: {
@@ -187,10 +235,9 @@ export default function App() {
     else addExpense(input);
   }
 
-  function startFreshAfterStorageError() {
+  async function startFreshAfterStorageError() {
     const cleared = clearSavedAppState();
-    setAppState(EMPTY_APP_STATE);
-    setStorageStatus(cleared ? 'ready' : 'unavailable');
+    if (cleared) { try { await saveRemoteState(token, EMPTY_APP_STATE); setAppState(EMPTY_APP_STATE); setStorageStatus('ready'); } catch { setStorageStatus('unavailable'); } }
     setToast(cleared ? language === 'ja' ? '保存データを消去しました。新しい記録を始められます。' : language === 'en' ? 'Saved data cleared. You can start fresh.' : 'Data tersimpan dihapus. Kamu bisa mulai mencatat.' : language === 'ja' ? '保存データを消去できませんでした。' : language === 'en' ? 'Could not clear saved data.' : 'Data tersimpan tidak dapat dihapus.');
   }
 
@@ -201,7 +248,7 @@ export default function App() {
       ? { ...preferences, currency: appState.settings.currency }
       : preferences;
     if (nextPreferences.currency !== appState.settings.currency && nextPreferences.currency !== 'JPY' && (!exchangeRates || !isRateFresh(exchangeRates))) {
-      const result = await getLatestExchangeRates();
+      const result = await getLatestExchangeRates(token);
       setExchangeRates(result.rates);
       setRateStatus(result.state);
       if (!result.rates) {
@@ -222,9 +269,9 @@ export default function App() {
             <h1>{header}</h1>
             <p>{subtitle[activeView]}</p>
           </div>
-          <button className="button button-primary topbar-add" disabled={storageStatus === 'malformed' || !canEditAmounts} onClick={beginAddExpense} type="button">
+          <div className="topbar-actions"><button className="button button-quiet signout-button" onClick={onLogout} type="button">{language === 'ja' ? 'ログアウト' : language === 'en' ? 'Sign out' : 'Keluar'}</button><button className="button button-primary topbar-add" disabled={storageStatus === 'malformed' || !canEditAmounts} onClick={beginAddExpense} type="button">
             <span aria-hidden="true">＋</span> {t(language, 'add' as never)}
-          </button>
+          </button></div>
         </header>
 
         {storageStatus === 'malformed' && (
